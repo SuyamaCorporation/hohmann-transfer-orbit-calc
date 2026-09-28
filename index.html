@@ -1,0 +1,305 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ホーマン遷移軌道 ΔV 計算ツール</title>
+<script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-900 text-gray-100 min-h-screen p-4">
+<script>
+function escapeHtml(str){return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#039;');}
+</script>
+<div class="max-w-5xl mx-auto">
+  <h1 class="text-2xl font-bold text-indigo-400 mb-1">ホーマン遷移軌道 ΔV 計算ツール</h1>
+  <p class="text-gray-400 text-sm mb-4">2つの円軌道間のホーマン遷移に必要なΔVを計算します</p>
+
+  <!-- Presets -->
+  <div class="mb-4 flex flex-wrap gap-2">
+    <span class="text-xs text-gray-400 self-center">プリセット:</span>
+    <button onclick="setPreset('leo_geo')" class="px-3 py-1 bg-indigo-700 hover:bg-indigo-600 rounded text-xs">LEO→GEO</button>
+    <button onclick="setPreset('earth_moon')" class="px-3 py-1 bg-indigo-700 hover:bg-indigo-600 rounded text-xs">地球→月</button>
+    <button onclick="setPreset('earth_mars')" class="px-3 py-1 bg-violet-700 hover:bg-violet-600 rounded text-xs">地球→火星</button>
+    <button onclick="setPreset('leo_meo')" class="px-3 py-1 bg-cyan-700 hover:bg-cyan-600 rounded text-xs">LEO→MEO</button>
+    <button onclick="setPreset('moon_surface')" class="px-3 py-1 bg-gray-600 hover:bg-gray-500 rounded text-xs">月面→LLO</button>
+  </div>
+
+  <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+    <!-- Input Panel -->
+    <div class="bg-gray-800 rounded-lg p-4">
+      <h2 class="text-lg font-semibold text-indigo-300 mb-3">入力パラメータ</h2>
+
+      <div class="mb-3">
+        <label class="block text-sm text-gray-400 mb-1">中心天体</label>
+        <select id="body" onchange="updateBody()" class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm">
+          <option value="earth">地球 (μ = 3.986×10¹⁴ m³/s²)</option>
+          <option value="moon">月 (μ = 4.904×10¹² m³/s²)</option>
+          <option value="mars">火星 (μ = 4.282×10¹³ m³/s²)</option>
+          <option value="sun">太陽 (μ = 1.327×10²⁰ m³/s²)</option>
+        </select>
+      </div>
+
+      <div class="mb-3">
+        <label class="block text-sm text-gray-400 mb-1">初期軌道高度 r₁ (km)</label>
+        <input id="r1" type="number" value="400" onchange="calculate()" class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm">
+        <p class="text-xs text-gray-500 mt-1">地表面からの高度</p>
+      </div>
+
+      <div class="mb-3">
+        <label class="block text-sm text-gray-400 mb-1">目標軌道高度 r₂ (km)</label>
+        <input id="r2" type="number" value="35786" onchange="calculate()" class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm">
+        <p class="text-xs text-gray-500 mt-1">地表面からの高度</p>
+      </div>
+
+      <hr class="border-gray-600 my-3">
+      <h3 class="text-sm font-semibold text-gray-300 mb-2">燃料計算（ロケット方程式）</h3>
+
+      <div class="mb-3">
+        <label class="block text-sm text-gray-400 mb-1">比推力 Isp (s)</label>
+        <input id="isp" type="number" value="450" onchange="calculate()" class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm">
+      </div>
+
+      <div class="mb-3">
+        <label class="block text-sm text-gray-400 mb-1">初期質量 m₀ (kg)</label>
+        <input id="m0" type="number" value="1000" onchange="calculate()" class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm">
+      </div>
+    </div>
+
+    <!-- Results Panel -->
+    <div class="bg-gray-800 rounded-lg p-4">
+      <h2 class="text-lg font-semibold text-cyan-300 mb-3">計算結果</h2>
+      <div id="results" class="space-y-2 text-sm"></div>
+    </div>
+  </div>
+
+  <!-- Canvas -->
+  <div class="bg-gray-800 rounded-lg p-4 mb-4">
+    <h2 class="text-lg font-semibold text-violet-300 mb-3">軌道図</h2>
+    <canvas id="orbitCanvas" width="700" height="400" class="w-full rounded bg-gray-950"></canvas>
+  </div>
+
+  <!-- Theory -->
+  <div class="bg-gray-800 rounded-lg p-4">
+    <h2 class="text-lg font-semibold text-gray-300 mb-2">理論解説</h2>
+    <div class="text-sm text-gray-400 space-y-2">
+      <p><span class="text-indigo-400 font-semibold">ホーマン遷移</span>: 同一平面上の2つの円軌道間で燃料効率が最良の2インパルス遷移法。</p>
+      <p><span class="text-cyan-400">ΔV₁</span>: 遷移楕円軌道への投入（近点でのバーン）</p>
+      <p><span class="text-violet-400">ΔV₂</span>: 目標円軌道への投入（遠点でのバーン）</p>
+      <p>式: ΔV₁ = √(μ/r₁)·(√(2r₂/(r₁+r₂)) − 1), &nbsp; ΔV₂ = √(μ/r₂)·(1 − √(2r₁/(r₁+r₂)))</p>
+      <p><span class="text-yellow-400">ツィオルコフスキー方程式</span>: ΔV = Isp · g₀ · ln(m₀/mf) &nbsp; (g₀ = 9.80665 m/s²)</p>
+    </div>
+  </div>
+</div>
+
+<script>
+function escapeHtml(str){return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#039;');}
+
+const BODIES = {
+  earth: { mu: 3.986e14, R: 6371, name: '地球' },
+  moon:  { mu: 4.904e12, R: 1737, name: '月' },
+  mars:  { mu: 4.282e13, R: 3390, name: '火星' },
+  sun:   { mu: 1.327e20, R: 695700, name: '太陽' }
+};
+
+const PRESETS = {
+  leo_geo:     { body: 'earth', r1: 400, r2: 35786 },
+  earth_moon:  { body: 'earth', r1: 400, r2: 384400 - 6371 },
+  earth_mars:  { body: 'sun',   r1: 149600000 - 695700, r2: 227900000 - 695700 },
+  leo_meo:     { body: 'earth', r1: 400, r2: 20200 },
+  moon_surface:{ body: 'moon',  r1: 0.1, r2: 100 }
+};
+
+function setPreset(key) {
+  const p = PRESETS[key];
+  document.getElementById('body').value = p.body;
+  document.getElementById('r1').value = p.r1;
+  document.getElementById('r2').value = p.r2;
+  calculate();
+}
+
+function updateBody() { calculate(); }
+
+function calculate() {
+  const body = BODIES[document.getElementById('body').value];
+  const h1 = parseFloat(document.getElementById('r1').value) || 0;
+  const h2 = parseFloat(document.getElementById('r2').value) || 0;
+  const isp = parseFloat(document.getElementById('isp').value) || 450;
+  const m0 = parseFloat(document.getElementById('m0').value) || 1000;
+
+  const mu = body.mu;
+  const R = body.R;
+  const r1 = (R + h1) * 1000; // m
+  const r2 = (R + h2) * 1000; // m
+  const g0 = 9.80665;
+
+  if (r1 <= 0 || r2 <= 0 || r1 === r2) {
+    document.getElementById('results').innerHTML = '<p class="text-red-400">有効な軌道高度を入力してください</p>';
+    return;
+  }
+
+  const inner = Math.min(r1, r2);
+  const outer = Math.max(r1, r2);
+  const ascending = r2 > r1;
+
+  // Circular orbit velocities
+  const v1 = Math.sqrt(mu / inner);
+  const v2 = Math.sqrt(mu / outer);
+
+  // Transfer orbit semi-major axis
+  const a_t = (inner + outer) / 2;
+
+  // Velocities at transfer orbit periapsis and apoapsis
+  const v_tp = Math.sqrt(mu * (2/inner - 1/a_t));
+  const v_ta = Math.sqrt(mu * (2/outer - 1/a_t));
+
+  const dv1 = Math.abs(v_tp - v1);
+  const dv2 = Math.abs(v2 - v_ta);
+  const dv_total = dv1 + dv2;
+
+  // Transfer time (half orbital period of transfer ellipse)
+  const T_transfer = Math.PI * Math.sqrt(a_t**3 / mu);
+
+  // Propellant mass (Tsiolkovsky)
+  const mf = m0 / Math.exp(dv_total / (isp * g0));
+  const mp = m0 - mf;
+
+  // Format
+  const fmt = (v, d=1) => v.toLocaleString('ja-JP', {maximumFractionDigits: d});
+  const fmtT = (s) => {
+    if (s < 3600) return fmt(s/60, 1) + ' 分';
+    if (s < 86400) return fmt(s/3600, 2) + ' 時間';
+    return fmt(s/86400, 2) + ' 日';
+  };
+
+  const html = `
+    <div class="bg-gray-700 rounded p-3 space-y-1">
+      <div class="flex justify-between"><span class="text-gray-400">初期円軌道速度 v₁</span><span class="text-white font-mono">${fmt(v1/1000, 3)} km/s</span></div>
+      <div class="flex justify-between"><span class="text-gray-400">目標円軌道速度 v₂</span><span class="text-white font-mono">${fmt(v2/1000, 3)} km/s</span></div>
+    </div>
+    <div class="bg-indigo-900/50 rounded p-3 space-y-1">
+      <div class="flex justify-between"><span class="text-cyan-300">ΔV₁（第1バーン）</span><span class="text-cyan-300 font-mono font-bold">${fmt(dv1/1000, 3)} km/s</span></div>
+      <div class="flex justify-between"><span class="text-violet-300">ΔV₂（第2バーン）</span><span class="text-violet-300 font-mono font-bold">${fmt(dv2/1000, 3)} km/s</span></div>
+      <div class="flex justify-between border-t border-gray-600 pt-1 mt-1"><span class="text-yellow-300 font-semibold">ΔV 合計</span><span class="text-yellow-300 font-mono font-bold text-base">${fmt(dv_total/1000, 3)} km/s</span></div>
+    </div>
+    <div class="bg-gray-700 rounded p-3 space-y-1">
+      <div class="flex justify-between"><span class="text-gray-400">遷移時間</span><span class="text-white font-mono">${fmtT(T_transfer)}</span></div>
+      <div class="flex justify-between"><span class="text-gray-400">遷移楕円 半長軸</span><span class="text-white font-mono">${fmt(a_t/1000)} km</span></div>
+    </div>
+    <div class="bg-green-900/40 rounded p-3 space-y-1">
+      <div class="flex justify-between"><span class="text-green-300">推進剤質量</span><span class="text-green-300 font-mono font-bold">${fmt(mp, 1)} kg</span></div>
+      <div class="flex justify-between"><span class="text-gray-400">燃料消費率</span><span class="text-white font-mono">${fmt(mp/m0*100, 1)} %</span></div>
+      <div class="flex justify-between"><span class="text-gray-400">到達後質量</span><span class="text-white font-mono">${fmt(mf, 1)} kg</span></div>
+    </div>
+  `;
+  document.getElementById('results').innerHTML = html;
+
+  drawOrbit(inner, outer, a_t, ascending);
+}
+
+function drawOrbit(r1, r2, a_t, ascending) {
+  const canvas = document.getElementById('orbitCanvas');
+  const ctx = canvas.getContext('2d');
+  const W = canvas.width, H = canvas.height;
+  ctx.clearRect(0, 0, W, H);
+
+  // Dark space background
+  const grad = ctx.createRadialGradient(W/2, H/2, 0, W/2, H/2, Math.max(W,H)/2);
+  grad.addColorStop(0, '#0a0a1a');
+  grad.addColorStop(1, '#050510');
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, W, H);
+
+  // Stars
+  ctx.fillStyle = 'rgba(255,255,255,0.5)';
+  for (let i = 0; i < 80; i++) {
+    const sx = (Math.sin(i * 137.508) * 0.5 + 0.5) * W;
+    const sy = (Math.cos(i * 137.508 * 1.618) * 0.5 + 0.5) * H;
+    ctx.fillRect(sx, sy, 1, 1);
+  }
+
+  const margin = 60;
+  const scale = (Math.min(W, H) - margin*2) / (2 * r2);
+  const cx = W / 2, cy = H / 2;
+
+  const toScreen = (r, theta) => ({
+    x: cx + r * scale * Math.cos(theta),
+    y: cy - r * scale * Math.sin(theta)
+  });
+
+  // Central body
+  const bodyR = Math.max(8, BODIES[document.getElementById('body').value].R * 1000 * scale);
+  const bodyGrad = ctx.createRadialGradient(cx, cy, 0, cx, cy, bodyR);
+  bodyGrad.addColorStop(0, '#4a9eff');
+  bodyGrad.addColorStop(0.7, '#2266cc');
+  bodyGrad.addColorStop(1, '#0a1a3a');
+  ctx.fillStyle = bodyGrad;
+  ctx.beginPath();
+  ctx.arc(cx, cy, Math.min(bodyR, 30), 0, Math.PI * 2);
+  ctx.fill();
+
+  // Inner orbit
+  ctx.strokeStyle = '#6366f1';
+  ctx.lineWidth = 1.5;
+  ctx.setLineDash([]);
+  ctx.beginPath();
+  ctx.arc(cx, cy, r1 * scale, 0, Math.PI * 2);
+  ctx.stroke();
+
+  // Outer orbit
+  ctx.strokeStyle = '#a78bfa';
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.arc(cx, cy, r2 * scale, 0, Math.PI * 2);
+  ctx.stroke();
+
+  // Transfer ellipse
+  const rp = Math.min(r1, r2);
+  const ra = Math.max(r1, r2);
+  const ae = a_t * scale;
+  const c = (ra - rp) / 2 * scale; // focal distance
+  const be = Math.sqrt(ae * ae - c * c);
+
+  ctx.save();
+  ctx.translate(cx - c, cy); // center of ellipse offset by c from focus
+  ctx.strokeStyle = '#22d3ee';
+  ctx.lineWidth = 2;
+  ctx.setLineDash([6, 3]);
+  ctx.beginPath();
+  ctx.ellipse(0, 0, ae, be, 0, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.restore();
+  ctx.setLineDash([]);
+
+  // Burn points
+  const p1 = toScreen(rp, 0);
+  const p2 = toScreen(ra, Math.PI);
+
+  // ΔV1
+  ctx.fillStyle = '#22d3ee';
+  ctx.beginPath();
+  ctx.arc(p1.x, p1.y, 7, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = '#fff';
+  ctx.font = 'bold 12px monospace';
+  ctx.fillText('ΔV₁', p1.x + 10, p1.y - 5);
+
+  // ΔV2
+  ctx.fillStyle = '#a78bfa';
+  ctx.beginPath();
+  ctx.arc(p2.x, p2.y, 7, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = '#fff';
+  ctx.fillText('ΔV₂', p2.x + 10, p2.y - 5);
+
+  // Labels
+  ctx.fillStyle = '#6366f1';
+  ctx.font = '11px sans-serif';
+  ctx.fillText('初期軌道 r₁', cx + r1 * scale * 0.7, cy - 6);
+  ctx.fillStyle = '#a78bfa';
+  ctx.fillText('目標軌道 r₂', cx + r2 * scale * 0.7, cy - 6);
+}
+
+calculate();
+</script>
+</body>
+</html>
